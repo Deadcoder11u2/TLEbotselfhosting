@@ -1,1 +1,1 @@
-worker: gunicorn app:app
+web: bash run.sh
