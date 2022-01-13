@@ -5,7 +5,7 @@ import urllib.request
 from zipfile import ZipFile
 from io import BytesIO
 
-from tle import constants
+import constants
 
 URL_BASE = 'https://noto-website-2.storage.googleapis.com/pkgs/'
 FONTS = [constants.NOTO_SANS_CJK_BOLD_FONT_PATH,

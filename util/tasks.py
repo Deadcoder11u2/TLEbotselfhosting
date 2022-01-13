@@ -3,7 +3,7 @@ import logging
 
 from discord.ext import commands
 
-import tle.util.codeforces_common as cf_common
+import util.codeforces_common as cf_common
 
 
 class TaskError(commands.CommandError):

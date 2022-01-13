@@ -1,11 +1,11 @@
 import logging
 import os
 import datetime as dt
-from tle.util.codeforces_api import RatingChange, make_from_dict, Contest as CfContest
+from util.codeforces_api import RatingChange, make_from_dict, Contest as CfContest
 import requests
 import json
 
-from tle import constants
+import constants
 from discord.ext import commands
 
 from pathlib import Path
