@@ -8,13 +8,14 @@ cd "$(dirname "$0")"
 while true; do
     # git pull
     # poetry install
-    # FONTCONFIG_FILE=$PWD/extra/fonts.conf poetry run python -m tle
+    FONTCONFIG_FILE=$PWD/extra/fonts.conf poetry run python -m tle
 
     # (( $? != 42 )) && break
 
     # echo '==================================================================='
     # echo '=                       Restarting                                ='
     # echo '==================================================================='
-    cd tle
-    python
+    # cd tle
+    # python
+
 done
