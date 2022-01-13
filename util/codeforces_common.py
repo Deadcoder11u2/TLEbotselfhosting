@@ -10,7 +10,7 @@ import pytz
 from discord.ext import commands
 import discord
 
-from . import constants
+import constants
 from util import cache_system2
 from util import codeforces_api as cf
 from util import clist_api as clist
