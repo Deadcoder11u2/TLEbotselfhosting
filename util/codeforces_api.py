@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import time
+import os
+import requests
 import functools
 from collections import namedtuple, deque
 
@@ -15,7 +17,7 @@ GYM_BASE_URL = 'https://codeforces.com/gym/'
 PROFILE_BASE_URL = 'https://codeforces.com/profile/'
 ACMSGURU_BASE_URL = 'https://codeforces.com/problemsets/acmsguru/'
 GYM_ID_THRESHOLD = 100000
-DEFAULT_RATING = 1500
+DEFAULT_RATING = 100
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +118,18 @@ class Problem(namedtuple('Problem', 'contestId problemsetName index name type po
     def has_metadata(self):
         return self.contestId is not None and self.rating is not None
 
+    def tag_matches_or(self, query_tags):
+        """If any query tag is a substring of any problem tag, returns a list of matched tags."""
+        matches = set()
+        for query_tag in query_tags:
+            curmatch = [tag for tag in self.tags if query_tag in tag]
+            if not curmatch: 
+                continue
+            matches.update(curmatch)
+        if len(matches) == 0:
+            return None
+        return list(matches)
+
     def tag_matches(self, query_tags):
         """If every query tag is a substring of any problem tag, returns a list of matched tags."""
         matches = set()
@@ -209,7 +223,7 @@ def _bool_to_str(value):
 
 def cf_ratelimit(f):
     tries = 3
-    per_second = 5
+    per_second = 3
     last = deque([0]*per_second)
 
     @functools.wraps(f)
@@ -229,7 +243,7 @@ def cf_ratelimit(f):
 
             try:
                 return await f(*args, **kwargs)
-            except (ClientError, CallLimitExceededError) as e:
+            except (ClientError, CallLimitExceededError, CodeforcesApiError) as e:
                 logger.info(f'Try {i+1}/{tries} at query failed.')
                 logger.info(repr(e))
                 if i < tries - 1:
@@ -263,6 +277,38 @@ async def _query_api(path, data=None):
     if 'limit exceeded' in comment:
         raise CallLimitExceededError(comment)
     raise TrueApiError(comment)
+
+def proxy_ratelimit(f):
+    tries = 3
+    @functools.wraps(f)
+    async def wrapped(*args, **kwargs):
+        for i in range(tries):
+            await asyncio.sleep(3*i)
+            try:
+                return await f(*args, **kwargs)
+            except (ClientError, CallLimitExceededError, CodeforcesApiError) as e:
+                logger.info(f'Try {i+1}/{tries} at proxy api failed.')
+                logger.info(repr(e))
+                if i < tries - 1:
+                    logger.info(f'Retrying...')
+                else:
+                    logger.info(f'Aborting.')
+                    raise e
+    return wrapped
+
+@proxy_ratelimit
+async def _query_proxy(url):
+    try:
+        logger.info(f'Querying RatingList from Proxy API.')
+        resp = requests.get(url)
+        if resp.status_code != 200:
+            raise CodeforcesApiError
+        resp = resp.json()
+        logger.info(f'Fetched RatingList from Proxy API.')
+        return {user_dict['handle']: user_dict['rating'] for user_dict in resp}
+    except Exception as e:
+        logger.error(f'Request to Proxy API encountered error: {e!r}')
+        raise ClientError from e
 
 
 class contest:
@@ -373,6 +419,24 @@ class user:
                 raise
             result += [make_from_dict(User, user_dict) for user_dict in resp]
         return result
+    @staticmethod
+    def correct_rating_changes(*, resp, resource='codeforces.com'):
+        adaptO = [1400, 900, 550, 300, 150, 100, 50]
+        adaptN = [900, 550, 300, 150, 100, 50, 0]
+        for r in resp:
+            if (len(r) > 0):
+                if resource=='codeforces.com':
+                    if (r[0].newRating < 1000):
+                        for ind in range(0,(min(7, len(r)))):
+                            r[ind] = RatingChange(r[ind].contestId, r[ind].contestName, r[ind].handle, r[ind].rank, r[ind].ratingUpdateTimeSeconds, r[ind].oldRating+adaptO[ind], r[ind].newRating+adaptN[ind])
+                    else:
+                        r[0] = RatingChange(r[0].contestId, r[0].contestName, r[0].handle, r[0].rank, r[0].ratingUpdateTimeSeconds, r[0].oldRating+1500, r[0].newRating)
+        if resource!='atcoder.jp':
+            for r in resp:
+                for ind in range(0,len(r)):
+                    r[ind] = RatingChange(r[ind].contestId, r[ind].contestName, r[ind].handle, r[ind].rank, r[ind].ratingUpdateTimeSeconds, r[ind].oldRating + 4*(r[ind].newRating-r[ind].oldRating), r[ind].newRating)
+        return resp
+
 
     @staticmethod
     async def rating(*, handle):
@@ -389,11 +453,16 @@ class user:
 
     @staticmethod
     async def ratedList(*, activeOnly=None):
-        params = {}
-        if activeOnly is not None:
-            params['activeOnly'] = _bool_to_str(activeOnly)
-        resp = await _query_api('user.ratedList', params)
-        return [make_from_dict(User, user_dict) for user_dict in resp]
+        url = os.getenv('RATED_LIST_PROXY')
+        if url:
+            return await _query_proxy(url)
+        else:
+            params = {}
+            if activeOnly is not None:
+                params['activeOnly'] = _bool_to_str(activeOnly)
+            resp = await _query_api('user.ratedList', params)
+            return {user_dict['handle']: user_dict['rating'] for user_dict in resp}
+
 
     @staticmethod
     async def status(*, handle, from_=None, count=None):

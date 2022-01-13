@@ -15,7 +15,7 @@ from tle.util.ranklist import Ranklist
 
 logger = logging.getLogger(__name__)
 _CONTESTS_PER_BATCH_IN_CACHE_UPDATES = 100
-CONTEST_BLACKLIST = {1308, 1309, 1431, 1432}
+CONTEST_BLACKLIST = {1308, 1309, 1431, 1432, 1522, 1531}
 
 def _is_blacklisted(contest):
     return contest.id in CONTEST_BLACKLIST
@@ -693,8 +693,5 @@ class CacheSystem:
     async def getUsersEffectiveRating(*, activeOnly=None):
         """ Returns a dictionary mapping user handle to his effective rating for all the users.
         """
-        ratedList = await cf.user.ratedList(activeOnly=activeOnly)
-        users_effective_rating_dict = {user.handle: user.effective_rating
-                                  for user in ratedList}
-        return users_effective_rating_dict
+        return await cf.user.ratedList(activeOnly=activeOnly)
 

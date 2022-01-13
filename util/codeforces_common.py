@@ -6,12 +6,14 @@ import time
 import datetime
 from collections import defaultdict
 import itertools
+import pytz
 from discord.ext import commands
 import discord
 
 from tle import constants
 from tle.util import cache_system2
 from tle.util import codeforces_api as cf
+from tle.util import clist_api as clist
 from tle.util import db
 from tle.util import events
 
@@ -31,6 +33,8 @@ _contest_id_to_writers_map = None
 _initialize_done = False
 
 active_groups = defaultdict(set)
+
+default_timezone = pytz.timezone('Asia/Kolkata')
 
 
 async def initialize(nodb):
@@ -99,7 +103,7 @@ def is_contest_writer(contest_id, handle):
 
 
 _NONSTANDARD_CONTEST_INDICATORS = [
-    'wild', 'fools', 'unrated', 'surprise', 'unknown', 'friday', 'q#', 'testing',
+    'wild', 'fools', 'surprise', 'unknown', 'friday', 'q#', 'testing',
     'marathon', 'kotlin', 'onsite', 'experimental', 'abbyy']
 
 
@@ -157,10 +161,13 @@ class FindMemberFailedError(ResolveHandleError):
     def __init__(self, member):
         super().__init__(f'Unable to convert `{member}` to a server member')
 
+class FindRoleFailedError(ResolveHandleError):
+    def __init__(self, role):
+        super().__init__(f'Unable to convert `{role}` to a server role')
 
 class HandleNotRegisteredError(ResolveHandleError):
-    def __init__(self, member):
-        super().__init__(f'Codeforces handle for {member.mention} not found in database')
+    def __init__(self, member, resource='Codeforces'):
+        super().__init__(f'{resource} handle for {member.mention} not found in database')
 
 
 class HandleIsVjudgeError(ResolveHandleError):
@@ -213,35 +220,98 @@ def days_ago(t):
         return 'yesterday'
     return f'{math.floor(days)} days ago'
 
-async def resolve_handles(ctx, converter, handles, *, mincnt=1, maxcnt=5, default_to_all_server=False):
+def get_guild_timezone(guild_id):
+    settings = user_db.get_reminder_settings(guild_id)
+    timezone = default_timezone
+    if settings is not None:
+        _, _, _, localtimezone, _, _ = settings
+        timezone = pytz.timezone(localtimezone)
+    return timezone
+
+async def resolve_handles(ctx, converter, handles, *, mincnt=1, maxcnt=5, default_to_all_server=False, resource='codeforces.com'):
     """Convert an iterable of strings to CF handles. A string beginning with ! indicates Discord username,
      otherwise it is a raw CF handle to be left unchanged."""
+    role_converter = commands.RoleConverter()
     handles = set(handles)
     if default_to_all_server and not handles:
         handles.add('+server')
+    account_ids = set()
     if '+server' in handles:
         handles.remove('+server')
-        guild_handles = {handle for discord_id, handle
-                            in user_db.get_handles_for_guild(ctx.guild.id)}
-        handles.update(guild_handles)
-    if len(handles) < mincnt or (maxcnt and maxcnt < len(handles)):
+        if resource=='codeforces.com':
+            guild_handles = {handle for discord_id, handle
+                                in user_db.get_handles_for_guild(ctx.guild.id)}
+            handles.update(guild_handles)
+        else:
+            guild_account_ids = {account_id for user_id, account_id, handle 
+            in user_db.get_account_ids_for_resource(ctx.guild.id, resource=resource)}
+            account_ids.update(guild_account_ids)
+    if len(account_ids)==0 and (len(handles) < mincnt or (maxcnt and maxcnt < len(handles))):
         raise HandleCountOutOfBoundsError(mincnt, maxcnt)
-    resolved_handles = []
+    resolved_handles = set()
     for handle in handles:
-        if handle.startswith('!'):
+        if handle.startswith('+!'):
+            role_identifier = handle[2:]
+            try:
+                role = await role_converter.convert(ctx, role_identifier)
+            except commands.errors.CommandError:
+                raise FindRoleFailedError(role_identifier)
+            for member in ctx.guild.members:
+                if role in member.roles:
+                    if resource=='codeforces.com':
+                        handle = user_db.get_handle(member.id, ctx.guild.id)
+                        if handle is not None:
+                            resolved_handles.add(handle)
+                    else:
+                        account_id = user_db.get_account_id(member.id, ctx.guild.id, resource=resource)
+                        if account_id is not None:
+                            account_ids.add(account_id)
+        elif handle.startswith('+'):
+            list_name = handle[1:]
+            if resource=='codeforces.com':
+                list_handles = set(user_db.get_list_handles(list_name=list_name, resource=resource))
+                resolved_handles.update(list_handles)
+            else:
+                list_account_ids = set(user_db.get_list_account_ids(list_name=list_name, resource=resource))
+                account_ids.update(list_account_ids)
+        elif handle.startswith('!'):
             # ! denotes Discord user
             member_identifier = handle[1:]
             try:
                 member = await converter.convert(ctx, member_identifier)
             except commands.errors.CommandError:
                 raise FindMemberFailedError(member_identifier)
-            handle = user_db.get_handle(member.id, ctx.guild.id)
-            if handle is None:
-                raise HandleNotRegisteredError(member)
+            if resource=='codeforces.com':
+                handle = user_db.get_handle(member.id, ctx.guild.id)
+                if handle is None:
+                    raise HandleNotRegisteredError(member)
+                resolved_handles.add(handle)
+            else:
+                account_id = user_db.get_account_id(member.id, ctx.guild.id, resource=resource)
+                if account_id is None:
+                    raise HandleNotRegisteredError(member, resource=resource)
+                else:
+                    account_ids.add(account_id)
+        else:
+            if resource=='codeforces.com':
+                resolved_handles.add(handle)
+            else:
+                account_id = user_db.get_account_id_from_handle(handle=handle, resource=resource)
+                if account_id is None:
+                    resolved_handles.add(handle)
+                else:
+                    account_ids.add(account_id)
         if handle in HandleIsVjudgeError.HANDLES:
             raise HandleIsVjudgeError(handle)
-        resolved_handles.append(handle)
-    return resolved_handles
+    if resource=='codeforces.com':
+        return list(resolved_handles)
+    else:
+        if len(resolved_handles)!=0:
+            clist_users = await clist.fetch_user_info(resource=resource, handles=list(resolved_handles))
+            if clist_users!=None:
+                for user in clist_users:
+                    account_ids.add(int(user['id']))
+        return list(account_ids)
 
 def members_to_handles(members: [discord.Member], guild_id):
     handles = []
@@ -288,6 +358,7 @@ class SubFilter:
         self.rlo, self.rhi = 500, 3800
         self.types = []
         self.tags = []
+        self.notags = []
         self.contests = []
         self.indices = []
 
@@ -314,6 +385,10 @@ class SubFilter:
                 if len(arg) == 1:
                     raise ParamParseError('Problem tag cannot be empty.')
                 self.tags.append(arg[1:])
+            elif arg[0] == '~':
+                if len(arg) == 1:
+                    raise ParamParseError('Problem tag cannot be empty.')
+                self.notags.append(arg[1:])
             elif arg[0:2] == 'd<':
                 self.dhi = min(self.dhi, parse_date(arg[2:]))
             elif arg[0:3] == 'd>=':
@@ -361,6 +436,7 @@ class SubFilter:
             type_ok = submission.author.participantType in self.types
             date_ok = self.dlo <= submission.creationTimeSeconds < self.dhi
             tag_ok = not self.tags or problem.tag_matches(self.tags)
+            notag_ok = not self.notags or problem.tag_matches_or(self.notags) == None
             index_ok = not self.indices or any(index.lower() == problem.index.lower() for index in self.indices)
             contest_ok = not self.contests or (contest and contest.matches(self.contests))
             team_ok = self.team or len(submission.author.members) == 1
@@ -372,7 +448,7 @@ class SubFilter:
                 problem_ok = (not contest or contest.id >= cf.GYM_ID_THRESHOLD
                               or not is_nonstandard_problem(problem))
                 rating_ok = True
-            if type_ok and date_ok and rating_ok and tag_ok and team_ok and problem_ok and contest_ok and index_ok:
+            if type_ok and date_ok and rating_ok and tag_ok and notag_ok and team_ok and problem_ok and contest_ok and index_ok:
                 filtered_subs.append(submission)
         return filtered_subs
 
