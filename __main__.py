@@ -99,9 +99,9 @@ def main():
         return True
     
     def ban_check(ctx):
-        banned = cf_common.user_db.get_banned_user(ctx.author.id)
-        if banned is None:
-            return True
+        # banned = cf_common.user_db.get_banned_user(ctx.author.id)
+        # if banned is None:
+        #     return True
         return False
 
     # Restrict bot usage to inside guild channels only.
