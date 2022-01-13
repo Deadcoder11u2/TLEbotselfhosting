@@ -9,8 +9,9 @@ RUN python3.8 -m pip install poetry
 
 COPY ./poetry.lock ./poetry.lock
 COPY ./pyproject.toml ./pyproject.toml
-COPY . .
 
-RUN chmod +x run.sh
+RUN python3.8 -m poetry install
+
+COPY . .
 
 ENTRYPOINT ["/TLE/run.sh"]

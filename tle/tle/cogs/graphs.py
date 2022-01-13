@@ -2,10 +2,8 @@ import bisect
 import collections
 import datetime as dt
 import time
-import re
 import itertools
 import math
-from tle.cogs.handles import ATCODER_RATED_RANKS, CODECHEF_RATED_RANKS, _CLIST_RESOURCE_SHORT_FORMS, _SUPPORTED_CLIST_RESOURCES
 from typing import List
 
 import discord
@@ -22,7 +20,6 @@ from matplotlib.ticker import MultipleLocator
 from tle import constants
 from tle.util import codeforces_api as cf
 from tle.util import codeforces_common as cf_common
-from tle.util import clist_api as clist
 from tle.util import discord_common
 from tle.util import graph_common as gc
 
@@ -42,51 +39,42 @@ def nice_sub_type(types):
                 'PRACTICE':'Practice: {}'}
     return [nice_map[t] for t in types]
 
-def _plot_rating(resp, mark='o', resource='codeforces.com'):
-
-    for rating_changes in resp:
-        ratings, times = [], []
-        for rating_change in rating_changes:
-            ratings.append(rating_change.newRating)
-            times.append(dt.datetime.fromtimestamp(rating_change.ratingUpdateTimeSeconds))
-
-        plt.plot(times,
+def _plot_rating(plot_data, mark):
+    for ratings, when in plot_data:
+        plt.plot(when,
                  ratings,
                  linestyle='-',
                  marker=mark,
                  markersize=3,
                  markerfacecolor='white',
                  markeredgewidth=0.5)
-    if resource=='codechef.com':
-        gc.plot_rating_bg(CODECHEF_RATED_RANKS)
-    elif resource=='atcoder.jp':
-        gc.plot_rating_bg(ATCODER_RATED_RANKS)
-    else:
-        gc.plot_rating_bg(cf.RATED_RANKS)
+    gc.plot_rating_bg(cf.RATED_RANKS)
+
+def _plot_rating_by_date(resp, mark='o'):
+    def gen_plot_data():
+        for rating_changes in resp:
+            ratings, times = [], []
+            for rating_change in rating_changes:
+                ratings.append(rating_change.newRating)
+                times.append(dt.datetime.fromtimestamp(rating_change.ratingUpdateTimeSeconds))
+            yield (ratings, times)
+
+    _plot_rating(gen_plot_data(), mark)
     plt.gcf().autofmt_xdate()
 
-def _plot_perf(resp, mark='o', resource='codeforces.com'):
+def _plot_rating_by_contest(resp, mark='o'):
+    def gen_plot_data():
+        for rating_changes in resp:
+            ratings, indices = [], []
+            index = 1
+            for rating_change in rating_changes:
+                ratings.append(rating_change.newRating)
+                indices.append(index)
+                index += 1
+            yield (ratings, indices)
 
-    for rating_changes in resp:
-        ratings, times = [], []
-        for rating_change in rating_changes:
-            ratings.append(rating_change.oldRating)
-            times.append(dt.datetime.fromtimestamp(rating_change.ratingUpdateTimeSeconds))
+    _plot_rating(gen_plot_data(), mark)
 
-        plt.plot(times,
-                 ratings,
-                 linestyle='-',
-                 marker=mark,
-                 markersize=3,
-                 markerfacecolor='white',
-                 markeredgewidth=0.5)
-    if resource=='codechef.com':
-        gc.plot_rating_bg(CODECHEF_RATED_RANKS)
-    elif resource=='atcoder.jp':
-        gc.plot_rating_bg(ATCODER_RATED_RANKS)
-    else:
-        gc.plot_rating_bg(cf.RATED_RANKS)
-    plt.gcf().autofmt_xdate()    
 
 def _classify_submissions(submissions):
     solved_by_type = {sub_type: [] for sub_type in cf.Party.PARTICIPANT_TYPES}
@@ -237,342 +225,19 @@ class Graphs(commands.Cog):
         use a server member's name instead by prefixing it with '!',
         for name with spaces use "!name with spaces" (with quotes)."""
         await ctx.send_help('plot')
-    
-    @plot.command(brief='Show speed of solving problems by rating',
-                  usage='[handles...] [+contest] [+virtual] [+outof] [+scatter] [r>=rating] [r<=rating] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy] [s=3]')
-    async def speed(self, ctx, *args):
-        """Plot average time spent on problems of particular rating during contest."""
 
-        (add_scatter,), args = cf_common.filter_flags(args, ['+scatter'])
-        filt = cf_common.SubFilter()
-        args = filt.parse(args)
-        if 'PRACTICE' in filt.types:
-            filt.types.remove('PRACTICE')  # can't estimate time for practice submissions
-
-        handles, point_size = [], 3
-        for arg in args:
-            if arg[0:2] == 's=':
-                point_size = int(arg[2:])
-            else:
-                handles.append(arg)
-
-        handles = handles or ['!' + str(ctx.author)]
-        handles = await cf_common.resolve_handles(ctx, self.converter, handles)
-        resp = [await cf.user.status(handle=handle) for handle in handles]
-        all_solved_subs = [filt.filter_subs(submissions) for submissions in resp]
-
-        plt.clf()
-        plt.xlabel('Rating')
-        plt.ylabel('Minutes spent')
-
-        max_time = 0  # for ylim
-
-        for submissions in all_solved_subs:
-            scatter_points = []  # only matters if +scatter
-
-            solved_by_contest = collections.defaultdict(lambda: [])
-            for submission in submissions:
-                # [solve_time, problem rating, problem index] for each solved problem
-                solved_by_contest[submission.contestId].append([
-                    submission.relativeTimeSeconds,
-                    submission.problem.rating,
-                    submission.problem.index
-                ])
-
-            time_by_rating = collections.defaultdict(lambda: [])
-            for events in solved_by_contest.values():
-                events.sort()
-                solved_subproblems = dict()
-                last_ac_time = 0
-
-                for (current_ac_time, rating, problem_index) in events:
-                    time_to_solve = current_ac_time - last_ac_time
-                    last_ac_time = current_ac_time
-
-                    # if there are subproblems, add total time for previous subproblems to current one
-                    if len(problem_index) == 2 and problem_index[1].isdigit():
-                        time_to_solve += solved_subproblems.get(problem_index[0], 0)
-                        solved_subproblems[problem_index[0]] = time_to_solve
-
-                    time_by_rating[rating].append(time_to_solve / 60)  # in minutes
-
-            for rating in time_by_rating.keys():
-                times = time_by_rating[rating]
-                time_by_rating[rating] = sum(times) / len(times)
-                if add_scatter:
-                    for t in times:
-                        scatter_points.append([rating, t])
-                        max_time = max(max_time, t)
-
-            xs = sorted(time_by_rating.keys())
-            ys = [time_by_rating[rating] for rating in xs]
-
-            max_time = max(max_time, max(ys, default=0))
-            plt.plot(xs, ys)
-            if add_scatter:
-                plt.scatter(*zip(*scatter_points), s=point_size)
-
-        labels = [gc.StrWrap(handle) for handle in handles]
-        plt.legend(labels)
-        plt.ylim(0, max_time + 5)
-
-        # make xticks divisible by 100
-        ticks = plt.gca().get_xticks()
-        base = ticks[1] - ticks[0]
-        plt.gca().get_xaxis().set_major_locator(MultipleLocator(base = max(base // 100 * 100, 100)))
-
-        discord_file = gc.get_current_figure_as_file()
-        embed = discord_common.cf_color_embed(title='Plot of average time spent on a problem')
-        discord_common.attach_image(embed, discord_file)
-        discord_common.set_author_footer(embed, ctx.author)
-
-        await ctx.send(embed=embed, file=discord_file)
-
-
-
-
-
-    @plot.command(brief='Plot CodeChef rating graph excluding long challenges', usage='[handles...] [+zoom] [+peak] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy]')
-    async def nolongrating(self, ctx, *args: str):
-        (zoom, peak), args = cf_common.filter_flags(args, ['+zoom' , '+peak'])
-        filt = cf_common.SubFilter()
-        args = filt.parse(args)
-        resource = 'codechef.com'
-        resp = None
-        if args:
-            handles = args
-            account_ids = await cf_common.resolve_handles(ctx, self.converter, handles, resource=resource)
-            data = dict()
-            for change in await clist.fetch_rating_changes(account_ids):
-                if change.handle in data:
-                    data[change.handle].append(change)
-                else:
-                    data[change.handle] = [change,]
-            resp = []
-            months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
-            for key in data:
-                changes = data[key]
-                filtered_changes = []
-                current_rating = 1500
-                for change in changes:
-                    data = {'contestId':change.contestId, 'contestName':change.contestName, 'handle':change.handle, 'rank':change.rank, 
-                            'ratingUpdateTimeSeconds':change.ratingUpdateTimeSeconds, 'oldRating':change.oldRating, 'newRating':change.newRating}
-                    if any([re.search(month+' Challenge ....', data['contestName']) for month in months]):
-                        continue
-                    performance = int(data['oldRating'])+4*(int(data['newRating'])-int(data['oldRating']))
-                    delta = (performance-current_rating)//4
-                    new_rating = current_rating+delta
-                    data['oldRating'] = current_rating
-                    data['newRating'] = new_rating
-                    current_rating = new_rating
-                    change = cf.make_from_dict(cf.RatingChange, data)
-                    filtered_changes.append(change)
-                resp.append(filtered_changes)
-        else:
-            handles = []
-            account_id = cf_common.user_db.get_account_id(ctx.author.id, ctx.guild.id, resource)
-            if account_id!=None:
-                resp = [await clist.fetch_rating_changes([account_id])]
-                handles.append(ctx.author.display_name)
-            else:
-                    raise cf_common.HandleNotRegisteredError(ctx.author)
-
-        resp = [filt.filter_rating_changes(rating_changes) for rating_changes in resp]
-
-        def max_prefix(user):
-            max_rate = 0
-            res = []
-            for data in user:
-                old_rating = data.oldRating
-                if old_rating == 0:
-                    old_rating = 1500
-                if data.newRating - old_rating >= 0 and data.newRating >= max_rate:
-                    max_rate = data.newRating
-                    res.append(data)
-            return(res)
-
-        if peak:
-            resp = [max_prefix(user) for user in resp]
-
-        plt.clf()
-        plt.axes().set_prop_cycle(gc.rating_color_cycler)
-        _plot_rating(resp, resource=resource)
-        current_ratings = [rating_changes[-1].newRating if rating_changes else 'Unrated' for rating_changes in resp]
-        if resource!='codeforces.com':
-            handles = [rating_changes[-1].handle for rating_changes in resp]
-        labels = [gc.StrWrap(f'{handle} ({rating})') for handle, rating in zip(handles, current_ratings)]
-        plt.legend(labels, loc='upper left')
-
-        if not zoom:
-            min_rating = 1100
-            max_rating = 1800
-            for rating_changes in resp:
-                for rating in rating_changes:
-                    min_rating = min(min_rating, rating.newRating)
-                    max_rating = max(max_rating, rating.newRating)
-            plt.ylim(min_rating - 100, max_rating + 200)
-
-        discord_file = gc.get_current_figure_as_file()
-        embed = discord_common.cf_color_embed(title='Rating graph on '+resource)
-        discord_common.attach_image(embed, discord_file)
-        discord_common.set_author_footer(embed, ctx.author)
-        await ctx.send(embed=embed, file=discord_file)
-
-    @plot.command(brief='Plot Codeforces rating graph', usage='[codechef/atcoder] [handles...] [+zoom] [+peak] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy]')
+    @plot.command(brief='Plot Codeforces rating graph', usage='[+zoom] [+number] [+peak] [handles...] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy]')
     async def rating(self, ctx, *args: str):
         """Plots Codeforces rating graph for the handles provided."""
 
-        (zoom, peak), args = cf_common.filter_flags(args, ['+zoom' , '+peak'])
+        (zoom, number, peak), args = cf_common.filter_flags(args, ['+zoom' , '+number', '+peak'])
         filt = cf_common.SubFilter()
         args = filt.parse(args)
-        resource = 'codeforces.com'
-        for key in _CLIST_RESOURCE_SHORT_FORMS:
-            if key in args:
-                args.remove(key)
-                resource = _CLIST_RESOURCE_SHORT_FORMS[key]
-        for key in _SUPPORTED_CLIST_RESOURCES:
-            if key in args:
-                args.remove(key)
-                resource = key
-        resp = None
-        if resource=='codeforces.com':
-            handles = args or ('!' + str(ctx.author),)
-            handles = await cf_common.resolve_handles(ctx, self.converter, handles)
-            resp = [await cf.user.rating(handle=handle) for handle in handles]
-            if not any(resp):
-                handles_str = ', '.join(f'`{handle}`' for handle in handles)
-                if len(handles) == 1:
-                    message = f'User {handles_str} is not rated'
-                else:
-                    message = f'None of the given users {handles_str} are rated'
-                raise GraphCogError(message)
-        else:
-            if resource not in ['codechef.com', 'atcoder.jp']:
-                raise GraphCogError('You cannot plot rating of '+resource+' as of now')
-            if args:
-                handles = args
-                account_ids = await cf_common.resolve_handles(ctx, self.converter, handles, resource=resource)
-                data = dict()
-                for change in await clist.fetch_rating_changes(account_ids):
-                    if change.handle in data:
-                        data[change.handle].append(change)
-                    else:
-                        data[change.handle] = [change,]
-                resp = []
-                for key in data:
-                    resp.append(data[key])
-            else:
-                handles = []
-                account_id = cf_common.user_db.get_account_id(ctx.author.id, ctx.guild.id, resource)
-                if account_id!=None:
-                    resp = [await clist.fetch_rating_changes([account_id])]
-                    handles.append(ctx.author.display_name)
-                else:
-                    raise cf_common.HandleNotRegisteredError(ctx.author)
-
+        handles = args or ('!' + str(ctx.author),)
+        handles = await cf_common.resolve_handles(ctx, self.converter, handles)
+        resp = [await cf.user.rating(handle=handle) for handle in handles]
         resp = [filt.filter_rating_changes(rating_changes) for rating_changes in resp]
 
-        def max_prefix(user):
-            max_rate = 0
-            res = []
-            for data in user:
-                old_rating = data.oldRating
-                if old_rating == 0:
-                    old_rating = 1500
-                if data.newRating - old_rating >= 0 and data.newRating >= max_rate:
-                    max_rate = data.newRating
-                    res.append(data)
-            return(res)
-
-        if peak:
-            resp = [max_prefix(user) for user in resp]
-
-        plt.clf()
-        plt.axes().set_prop_cycle(gc.rating_color_cycler)
-        _plot_rating(resp, resource=resource)
-        current_ratings = [rating_changes[-1].newRating if rating_changes else 'Unrated' for rating_changes in resp]
-        if resource!='codeforces.com':
-            handles = [rating_changes[-1].handle for rating_changes in resp]
-        labels = [gc.StrWrap(f'{handle} ({rating})') for handle, rating in zip(handles, current_ratings)]
-        plt.legend(labels, loc='upper left')
-
-        if not zoom:
-            min_rating = 1100
-            max_rating = 1800
-            for rating_changes in resp:
-                for rating in rating_changes:
-                    min_rating = min(min_rating, rating.newRating)
-                    max_rating = max(max_rating, rating.newRating)
-            plt.ylim(min_rating - 100, max_rating + 200)
-
-        discord_file = gc.get_current_figure_as_file()
-        embed = discord_common.cf_color_embed(title='Rating graph on '+resource)
-        discord_common.attach_image(embed, discord_file)
-        discord_common.set_author_footer(embed, ctx.author)
-        await ctx.send(embed=embed, file=discord_file)
-
-
-
-                    
-
-    @plot.command(brief='Plot Codeforces performance graph', usage='[codechef/atcoder] [handles...] [+zoom] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy]')
-    async def performance(self, ctx, *args: str):
-        """Plots Codeforces performance graph for the handles provided."""
-
-        (zoom, peak), args = cf_common.filter_flags(args, ['+zoom' , '+asdfgdsafefsdve'])
-        filt = cf_common.SubFilter()
-        args = filt.parse(args)
-        resource = 'codeforces.com'
-        for key in _CLIST_RESOURCE_SHORT_FORMS:
-            if key in args:
-                args.remove(key)
-                resource = _CLIST_RESOURCE_SHORT_FORMS[key]
-        for key in _SUPPORTED_CLIST_RESOURCES:
-            if key in args:
-                args.remove(key)
-                resource = key
-        resp = None
-        if resource=='codeforces.com':
-            handles = args or ('!' + str(ctx.author),)
-            handles = await cf_common.resolve_handles(ctx, self.converter, handles)
-            resp = [await cf.user.rating(handle=handle) for handle in handles]
-            if not any(resp):
-                handles_str = ', '.join(f'`{handle}`' for handle in handles)
-                if len(handles) == 1:
-                    message = f'User {handles_str} is not rated'
-                else:
-                    message = f'None of the given users {handles_str} are rated'
-                raise GraphCogError(message)
-        else:
-            if resource not in ['codechef.com', 'atcoder.jp']:
-                raise GraphCogError('You cannot plot performance of '+resource+' as of now')
-            if args:
-                handles = args
-                account_ids = await cf_common.resolve_handles(ctx, self.converter, handles, resource=resource)
-                data = dict()
-                for change in await clist.fetch_rating_changes(account_ids, resource=='atcoder.jp'):
-                    if change.handle in data:
-                        data[change.handle].append(change)
-                    else:
-                        data[change.handle] = [change,]
-                resp = []
-                for key in data:
-                    resp.append(data[key])
-            else:
-                handles = []
-                account_id = cf_common.user_db.get_account_id(ctx.author.id, ctx.guild.id, resource)
-                if account_id!=None:
-                    resp = [await clist.fetch_rating_changes([account_id],  resource=='atcoder.jp')]
-                    handles.append(ctx.author.display_name)
-                else:
-                    raise cf_common.HandleNotRegisteredError(ctx.author)
-        # extract last rating before corrections
-        current_ratings = [rating_changes[-1].newRating if rating_changes else 'Unrated' for rating_changes in resp]
-        if resource!='codeforces.com':
-            handles = [rating_changes[-1].handle for rating_changes in resp]
-        resp = cf.user.correct_rating_changes(resp=resp, resource=resource)
-        resp = [filt.filter_rating_changes(rating_changes) for rating_changes in resp]
-        
         if not any(resp):
             handles_str = ', '.join(f'`{handle}`' for handle in handles)
             if len(handles) == 1:
@@ -581,9 +246,28 @@ class Graphs(commands.Cog):
                 message = f'None of the given users {handles_str} are rated'
             raise GraphCogError(message)
 
+        def max_prefix(user):
+            max_rate = 0
+            res = []
+            for data in user:
+                old_rating = data.oldRating
+                if old_rating == 0:
+                    old_rating = 1500
+                if data.newRating - old_rating >= 0 and data.newRating >= max_rate:
+                    max_rate = data.newRating
+                    res.append(data)
+            return(res)
+
+        if peak:
+            resp = [max_prefix(user) for user in resp]
+
         plt.clf()
         plt.axes().set_prop_cycle(gc.rating_color_cycler)
-        _plot_perf(resp, resource=resource)
+        if number:
+            _plot_rating_by_contest(resp)
+        else:
+            _plot_rating_by_date(resp)
+        current_ratings = [rating_changes[-1].newRating if rating_changes else 'Unrated' for rating_changes in resp]
         labels = [gc.StrWrap(f'{handle} ({rating})') for handle, rating in zip(handles, current_ratings)]
         plt.legend(labels, loc='upper left')
 
@@ -592,12 +276,12 @@ class Graphs(commands.Cog):
             max_rating = 1800
             for rating_changes in resp:
                 for rating in rating_changes:
-                    min_rating = min(min_rating, rating.oldRating)
-                    max_rating = max(max_rating, rating.oldRating)
+                    min_rating = min(min_rating, rating.newRating)
+                    max_rating = max(max_rating, rating.newRating)
             plt.ylim(min_rating - 100, max_rating + 200)
 
         discord_file = gc.get_current_figure_as_file()
-        embed = discord_common.cf_color_embed(title='Performance graph on '+resource)
+        embed = discord_common.cf_color_embed(title='Rating graph on Codeforces')
         discord_common.attach_image(embed, discord_file)
         discord_common.set_author_footer(embed, ctx.author)
         await ctx.send(embed=embed, file=discord_file)
@@ -642,7 +326,7 @@ class Graphs(commands.Cog):
         await ctx.send(embed=embed, file=discord_file)
 
     @plot.command(brief="Show histogram of solved problems' rating on CF",
-                  usage='[handles] [+practice] [+contest] [+virtual] [+outof] [+team] [+tag..] [~tag..] [r>=rating] [r<=rating] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy] [c+marker..] [i+index..]')
+                  usage='[handles] [+practice] [+contest] [+virtual] [+outof] [+team] [+tag..] [r>=rating] [r<=rating] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy] [c+marker..] [i+index..]')
     async def solved(self, ctx, *args: str):
         """Shows a histogram of solved problems' rating on Codeforces for the handles provided.
         e.g. ;plot solved meooow +contest +virtual +outof +dp"""
@@ -694,7 +378,7 @@ class Graphs(commands.Cog):
         await ctx.send(embed=embed, file=discord_file)
 
     @plot.command(brief='Show histogram of solved problems on CF over time',
-                  usage='[handles] [+practice] [+contest] [+virtual] [+outof] [+team] [+tag..] [~tag..] [r>=rating] [r<=rating] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy] [phase_days=] [c+marker..] [i+index..]')
+                  usage='[handles] [+practice] [+contest] [+virtual] [+outof] [+team] [+tag..] [r>=rating] [r<=rating] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy] [phase_days=] [c+marker..] [i+index..]')
     async def hist(self, ctx, *args: str):
         """Shows the histogram of problems solved on Codeforces over time for the handles provided"""
         filt = cf_common.SubFilter()
@@ -776,7 +460,7 @@ class Graphs(commands.Cog):
         await ctx.send(embed=embed, file=discord_file)
 
     @plot.command(brief='Plot count of solved CF problems over time',
-                  usage='[handles] [+practice] [+contest] [+virtual] [+outof] [+team] [+tag..] [~tag..] [r>=rating] [r<=rating] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy] [c+marker..] [i+index..]')
+                  usage='[handles] [+practice] [+contest] [+virtual] [+outof] [+team] [+tag..] [r>=rating] [r<=rating] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy] [c+marker..] [i+index..]')
     async def curve(self, ctx, *args: str):
         """Plots the count of problems solved over time on Codeforces for the handles provided."""
         filt = cf_common.SubFilter()
@@ -813,7 +497,7 @@ class Graphs(commands.Cog):
         await ctx.send(embed=embed, file=discord_file)
 
     @plot.command(brief='Show history of problems solved by rating',
-                  aliases=['chilli'], usage='[handle] [+practice] [+contest] [+virtual] [+outof] [+team] [+tag..] [~tag..] [r>=rating] [r<=rating] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy] [b=10] [s=3] [c+marker..] [i+index..] [+nolegend]')
+                  aliases=['chilli'], usage='[handle] [+practice] [+contest] [+virtual] [+outof] [+team] [+tag..] [r>=rating] [r<=rating] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy] [b=10] [s=3] [c+marker..] [i+index..] [+nolegend]')
     async def scatter(self, ctx, *args):
         """Plot Codeforces rating overlaid on a scatter plot of problems solved.
         Also plots a running average of ratings of problems solved in practice."""
@@ -1093,8 +777,8 @@ class Graphs(commands.Cog):
         if len(members) > 5:
             raise GraphCogError('Please specify at most 5 gudgitters.')
 
-        # shift the [-300, 500] gitgud range to center the text
-        hist_bins = list(range(-300 - 50, 500 + 50 + 1, 100))
+        # shift the [-300, 300] gitgud range to center the text
+        hist_bins = list(range(-300 - 50, 300 + 50 + 1, 100))
         deltas = [[x[0] for x in cf_common.user_db.howgud(member.id)] for member in members]
         labels = [gc.StrWrap(f'{member.display_name}: {len(delta)}')
                   for member, delta in zip(members, deltas)]
@@ -1271,6 +955,100 @@ class Graphs(commands.Cog):
         embed = discord_common.cf_color_embed(title=title)
         discord_common.attach_image(embed, discord_file)
         discord_common.set_author_footer(embed, ctx.author)
+        await ctx.send(embed=embed, file=discord_file)
+
+    @plot.command(brief='Show speed of solving problems by rating',
+                  usage='[handles...] [+contest] [+virtual] [+outof] [+scatter] [+median] [r>=rating] [r<=rating] [d>=[[dd]mm]yyyy] [d<[[dd]mm]yyyy] [s=3]')
+    async def speed(self, ctx, *args):
+        """Plot time spent on problems of particular rating during contest."""
+
+        (add_scatter, use_median), args = cf_common.filter_flags(args, ['+scatter', '+median'])
+        filt = cf_common.SubFilter()
+        args = filt.parse(args)
+        if 'PRACTICE' in filt.types:
+            filt.types.remove('PRACTICE')  # can't estimate time for practice submissions
+
+        handles, point_size = [], 3
+        for arg in args:
+            if arg[0:2] == 's=':
+                point_size = int(arg[2:])
+            else:
+                handles.append(arg)
+
+        handles = handles or ['!' + str(ctx.author)]
+        handles = await cf_common.resolve_handles(ctx, self.converter, handles)
+        resp = [await cf.user.status(handle=handle) for handle in handles]
+        all_solved_subs = [filt.filter_subs(submissions) for submissions in resp]
+
+        plt.clf()
+        plt.xlabel('Rating')
+        plt.ylabel('Minutes spent')
+
+        max_time = 0  # for ylim
+
+        for submissions in all_solved_subs:
+            scatter_points = []  # only matters if +scatter
+
+            solved_by_contest = collections.defaultdict(lambda: [])
+            for submission in submissions:
+                # [solve_time, problem rating, problem index] for each solved problem
+                solved_by_contest[submission.contestId].append([
+                    submission.relativeTimeSeconds,
+                    submission.problem.rating,
+                    submission.problem.index
+                ])
+
+            time_by_rating = collections.defaultdict(lambda: [])
+            for events in solved_by_contest.values():
+                events.sort()
+                solved_subproblems = dict()
+                last_ac_time = 0
+
+                for (current_ac_time, rating, problem_index) in events:
+                    time_to_solve = current_ac_time - last_ac_time
+                    last_ac_time = current_ac_time
+
+                    # if there are subproblems, add total time for previous subproblems to current one
+                    if len(problem_index) == 2 and problem_index[1].isdigit():
+                        time_to_solve += solved_subproblems.get(problem_index[0], 0)
+                        solved_subproblems[problem_index[0]] = time_to_solve
+
+                    time_by_rating[rating].append(time_to_solve / 60)  # in minutes
+
+            for rating in time_by_rating.keys():
+                times = time_by_rating[rating]
+                if use_median:
+                    time_by_rating[rating] = np.median(times)
+                else:
+                    time_by_rating[rating] = sum(times) / len(times)
+
+                if add_scatter:
+                    for t in times:
+                        scatter_points.append([rating, t])
+                        max_time = max(max_time, t)
+
+            xs = sorted(time_by_rating.keys())
+            ys = [time_by_rating[rating] for rating in xs]
+
+            max_time = max(max_time, max(ys, default=0))
+            plt.plot(xs, ys)
+            if add_scatter:
+                plt.scatter(*zip(*scatter_points), s=point_size)
+
+        labels = [gc.StrWrap(handle) for handle in handles]
+        plt.legend(labels)
+        plt.ylim(0, max_time + 5)
+
+        # make xticks divisible by 100
+        ticks = plt.gca().get_xticks()
+        base = ticks[1] - ticks[0]
+        plt.gca().get_xaxis().set_major_locator(MultipleLocator(base = max(base // 100 * 100, 100)))
+        discord_file = gc.get_current_figure_as_file()
+        title = f'Plot of {"median" if use_median else "average"} time spent on a problem'
+        embed = discord_common.cf_color_embed(title=title)
+        discord_common.attach_image(embed, discord_file)
+        discord_common.set_author_footer(embed, ctx.author)
+
         await ctx.send(embed=embed, file=discord_file)
 
     @discord_common.send_error_if(GraphCogError, cf_common.ResolveHandleError,

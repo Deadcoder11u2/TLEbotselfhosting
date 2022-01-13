@@ -1,21 +1,12 @@
 import sqlite3
 from enum import IntEnum
 from collections import namedtuple
-from typing import List
 
 from discord.ext import commands
 
 from tle.util import codeforces_api as cf
 
-from os import environ
-from firebase_admin import storage
-from tle import constants
-bucket = None
-STORAGE_BUCKET = str(environ.get('STORAGE_BUCKET'))
-if STORAGE_BUCKET!='None':
-    bucket = storage.bucket()
-
-_DEFAULT_VC_RATING = 100
+_DEFAULT_VC_RATING = 1500
 
 class Gitgud(IntEnum):
     GOTGUD = 0
@@ -74,13 +65,6 @@ class UserDbConn:
         self.conn = sqlite3.connect(dbfile)
         self.conn.row_factory = namedtuple_factory
         self.create_tables()
-    
-    # update the data in firebase
-    def update(self):
-        if bucket==None:
-            return
-        blob = bucket.blob('tle.db')
-        blob.upload_from_filename(constants.USER_DB_FILE_PATH)
 
     def create_tables(self):
         self.conn.execute(
@@ -109,16 +93,6 @@ class UserDbConn:
             'registration_time   INTEGER,'
             'friend_of_count     INTEGER,'
             'title_photo         TEXT'
-            ')'
-        )
-        self.conn.execute(
-            'CREATE TABLE IF NOT EXISTS clist_account_ids ('
-            'guild_id    TEXT,'
-            'user_id     TEXT,'
-            'account_id  INTEGER,'
-            'resource    TEXT,'
-            'handle      TEXT,'
-            'PRIMARY KEY (user_id, guild_id, resource)'
             ')'
         )
         # TODO: Make duel tables guild-aware.
@@ -169,39 +143,13 @@ class UserDbConn:
             )
         ''')
         self.conn.execute('''
-            CREATE TABLE IF NOT EXISTS lists(
-                guild_id TEXT,
-                name TEXT,
-                PRIMARY KEY(guild_id, name)
-            )
-        ''')
-        self.conn.execute(
-            'CREATE TABLE IF NOT EXISTS list_handles ('
-            'list    TEXT,'
-            'resource    TEXT,'
-            'account_id  INTEGER,'
-            'handle  TEXT,'
-            'PRIMARY KEY (list, resource, account_id)'
-            ')'
-        )
-        self.conn.execute('''
             CREATE TABLE IF NOT EXISTS reminder (
                 guild_id TEXT PRIMARY KEY,
                 channel_id TEXT,
                 role_id TEXT,
-                before TEXT,
-                timezone TEXT,
-                website_allowed_patterns TEXT,
-                website_disallowed_patterns TEXT
+                before TEXT
             )
         ''')
-        self.conn.execute(
-            '''
-            CREATE TABLE IF NOT EXISTS bans (
-                user_id TEXT PRIMARY KEY
-            )
-            '''
-        )
         self.conn.execute(
             'CREATE TABLE IF NOT EXISTS starboard ('
             'guild_id     TEXT PRIMARY KEY,'
@@ -321,7 +269,6 @@ class UserDbConn:
             self.conn.rollback()
             return 0
         self.conn.commit()
-        self.update()
         return 1
 
     def check_challenge(self, user_id):
@@ -339,18 +286,6 @@ class UserDbConn:
         res = self.conn.execute(query2, (c_id,)).fetchone()
         if res is None: return None
         return c_id, issue_time, res[0], res[1], res[2], res[3]
-
-    def get_gudgitters_last(self, timestamp):
-        query = '''
-            SELECT user_id, rating_delta FROM challenge WHERE finish_time >= ? ORDER BY user_id
-        '''
-        return self.conn.execute(query, (timestamp,)).fetchall()
-        
-    def get_gudgitters_timerange(self, timestampStart, timestampEnd):
-        query = '''
-            SELECT user_id, rating_delta FROM challenge WHERE finish_time >= ? AND finish_time <= ? ORDER BY user_id
-        '''
-        return self.conn.execute(query, (timestampStart,timestampEnd)).fetchall()        
 
     def get_gudgitters(self):
         query = '''
@@ -396,7 +331,6 @@ class UserDbConn:
             self.conn.rollback()
             return 0
         self.conn.commit()
-        self.update()
         return 1
 
     def skip_challenge(self, user_id, challenge_id, status):
@@ -416,7 +350,6 @@ class UserDbConn:
             self.conn.rollback()
             return 0
         self.conn.commit()
-        self.update()
         return 1
 
     def cache_cf_user(self, user):
@@ -424,10 +357,8 @@ class UserDbConn:
                  '(handle, first_name, last_name, country, city, organization, contribution, '
                  '    rating, maxRating, last_online_time, registration_time, friend_of_count, title_photo) '
                  'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-        res = None
         with self.conn:
-            res = self.conn.execute(query, user).rowcount
-        return res
+            return self.conn.execute(query, user).rowcount
 
     def fetch_cf_user(self, handle):
         query = ('SELECT handle, first_name, last_name, country, city, organization, contribution, '
@@ -448,38 +379,15 @@ class UserDbConn:
         query = ('INSERT OR REPLACE INTO user_handle '
                  '(user_id, guild_id, handle, active) '
                  'VALUES (?, ?, ?, 1)')
-        res = None
         with self.conn:
-            res = self.conn.execute(query, (user_id, guild_id, handle)).rowcount
-        self.update()
-        return res
-
-    def set_account_id(self, user_id, guild_id, account_id, resource, handle):
-        query = ('SELECT user_id '
-                 'FROM clist_account_ids '
-                 'WHERE guild_id = ? AND account_id = ?')
-        existing = self.conn.execute(query, (guild_id, account_id)).fetchone()
-        if existing and int(existing[0]) != user_id:
-            raise UniqueConstraintFailed
-
-        query = ('INSERT OR REPLACE INTO clist_account_ids '
-                 '(guild_id, account_id, user_id, resource, handle) '
-                 'VALUES (?, ?, ?, ?, ?)')
-        res = None
-        with self.conn:
-            res = self.conn.execute(query, (guild_id, account_id, user_id, resource,handle)).rowcount
-        self.update()
-        return res
+            return self.conn.execute(query, (user_id, guild_id, handle)).rowcount
 
     def set_inactive(self, guild_id_user_id_pairs):
         query = ('UPDATE user_handle '
                  'SET active = 0 '
                  'WHERE guild_id = ? AND user_id = ?')
-        res = None
         with self.conn:
-            res = self.conn.executemany(query, guild_id_user_id_pairs).rowcount
-        self.update()
-        return res
+            return self.conn.executemany(query, guild_id_user_id_pairs).rowcount
 
     def get_handle(self, user_id, guild_id):
         query = ('SELECT handle '
@@ -487,42 +395,6 @@ class UserDbConn:
                  'WHERE user_id = ? AND guild_id = ?')
         res = self.conn.execute(query, (user_id, guild_id)).fetchone()
         return res[0] if res else None
-
-    def get_account_id(self, user_id, guild_id, resource):
-        query = ('SELECT account_id '
-                 'FROM clist_account_ids '
-                 'WHERE user_id = ? AND guild_id = ? AND resource = ?')
-        res = self.conn.execute(query, (user_id, guild_id, resource)).fetchone()
-        return res[0] if res else None
-
-    def get_all_handles(self, guild_id):
-        query = ('SELECT handle '
-                 'FROM clist_account_ids '
-                 'WHERE guild_id = ?')
-        res = self.conn.execute(query, (str(guild_id),)).fetchall()
-        handles = []
-        for handle,  in res:
-            handles.append(handle)
-
-        
-        query = ('SELECT handle '
-                 'FROM user_handle '
-                 'WHERE guild_id = ? AND active = 1')
-        res = self.conn.execute(query, (str(guild_id),)).fetchall()
-        for handle, in res:
-            handles.append(handle)
-        return handles
-
-    def get_account_id_by_user(self, user_id, guild_id):
-        query = ('SELECT handle, resource '
-                 'FROM clist_account_ids '
-                 'WHERE user_id = ? AND guild_id = ?')
-        res = self.conn.execute(query, (user_id, guild_id)).fetchall()
-        ans = {}
-        for handle, resource in res:
-            ans[resource] = handle
-        return ans
-
 
     def get_user_id(self, handle, guild_id):
         query = ('SELECT user_id '
@@ -534,16 +406,8 @@ class UserDbConn:
     def remove_handle(self, user_id, guild_id):
         query = ('DELETE FROM user_handle '
                  'WHERE user_id = ? AND guild_id = ?')
-        res1 = None
         with self.conn:
-            res1 = self.conn.execute(query, (user_id, guild_id)).rowcount
-        query = ('DELETE FROM clist_account_ids '
-                 'WHERE user_id = ? AND guild_id = ?')
-        res2 = None
-        with self.conn:
-            res2 = self.conn.execute(query, (user_id, guild_id)).rowcount
-        self.update()
-        return res1 or res2
+            return self.conn.execute(query, (user_id, guild_id)).rowcount
 
     def get_handles_for_guild(self, guild_id):
         query = ('SELECT user_id, handle '
@@ -551,13 +415,6 @@ class UserDbConn:
                  'WHERE guild_id = ? AND active = 1')
         res = self.conn.execute(query, (guild_id,)).fetchall()
         return [(int(user_id), handle) for user_id, handle in res]
-    
-    def get_account_ids_for_resource(self, guild_id, resource):
-        query = ('SELECT user_id, account_id, handle '
-                 'FROM clist_account_ids '
-                 'WHERE guild_id = ? AND resource = ?')
-        res = self.conn.execute(query, (guild_id, resource)).fetchall()
-        return [(int(user_id), int(account_id), handle) for user_id, account_id, handle in res]
 
     def get_cf_users_for_guild(self, guild_id):
         query = ('SELECT u.user_id, c.handle, c.first_name, c.last_name, c.country, c.city, '
@@ -572,34 +429,24 @@ class UserDbConn:
 
     def get_reminder_settings(self, guild_id):
         query = '''
-            SELECT channel_id, role_id, before, timezone, website_allowed_patterns, website_disallowed_patterns
+            SELECT channel_id, role_id, before
             FROM reminder
             WHERE guild_id = ?
         '''
         return self.conn.execute(query, (guild_id,)).fetchone()
 
-    def set_reminder_settings(self, guild_id, channel_id, role_id, before, timezone, website_allowed_patterns, website_disallowed_patterns):
+    def set_reminder_settings(self, guild_id, channel_id, role_id, before):
         query = '''
-            INSERT OR REPLACE INTO reminder (guild_id, channel_id, role_id, before, timezone, website_allowed_patterns, website_disallowed_patterns)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO reminder (guild_id, channel_id, role_id, before)
+            VALUES (?, ?, ?, ?)
         '''
-        self.conn.execute(query, (guild_id, channel_id, role_id, before, timezone, website_allowed_patterns, website_disallowed_patterns))
+        self.conn.execute(query, (guild_id, channel_id, role_id, before))
         self.conn.commit()
-        self.update()
-
-    def set_time_zone(self, guild_id, timezone):
-        query = '''
-            UPDATE reminder SET timezone = ? WHERE guild_id = ?
-        '''
-        self.conn.execute(query, (timezone, guild_id))
-        self.conn.commit()
-        self.update()
 
     def clear_reminder_settings(self, guild_id):
         query = '''DELETE FROM reminder WHERE guild_id = ?'''
         self.conn.execute(query, (guild_id,))
         self.conn.commit()
-        self.update()
 
     def get_starboard(self, guild_id):
         query = ('SELECT channel_id '
@@ -613,14 +460,12 @@ class UserDbConn:
                  'VALUES (?, ?)')
         self.conn.execute(query, (guild_id, channel_id))
         self.conn.commit()
-        self.update()
 
     def clear_starboard(self, guild_id):
         query = ('DELETE FROM starboard '
                  'WHERE guild_id = ?')
         self.conn.execute(query, (guild_id,))
         self.conn.commit()
-        self.update()
 
     def add_starboard_message(self, original_msg_id, starboard_msg_id, guild_id):
         query = ('INSERT INTO starboard_message '
@@ -628,10 +473,9 @@ class UserDbConn:
                  'VALUES (?, ?, ?)')
         self.conn.execute(query, (original_msg_id, starboard_msg_id, guild_id))
         self.conn.commit()
-        self.update()
 
     def check_exists_starboard_message(self, original_msg_id):
-        query = ('SELECT 1 as Result '
+        query = ('SELECT 1 '
                  'FROM starboard_message '
                  'WHERE original_msg_id = ?')
         res = self.conn.execute(query, (original_msg_id,)).fetchone()
@@ -648,7 +492,6 @@ class UserDbConn:
                      'WHERE starboard_msg_id = ?')
             rc = self.conn.execute(query, (starboard_msg_id,)).rowcount
         self.conn.commit()
-        self.update()
         return rc
 
     def clear_starboard_messages_for_guild(self, guild_id):
@@ -656,7 +499,6 @@ class UserDbConn:
                  'WHERE guild_id = ?')
         rc = self.conn.execute(query, (guild_id,)).rowcount
         self.conn.commit()
-        self.update()
         return rc
 
     def check_duel_challenge(self, userid):
@@ -707,7 +549,6 @@ class UserDbConn:
         '''
         duelid = self.conn.execute(query, (challenger, challengee, issue_time, prob.name, prob.contestId, prob.index, dtype)).lastrowid
         self.conn.commit()
-        self.update()
         return duelid
 
     def cancel_duel(self, duelid, status):
@@ -719,7 +560,6 @@ class UserDbConn:
             self.conn.rollback()
             return 0
         self.conn.commit()
-        self.update()
         return rc
 
     def invalidate_duel(self, duelid):
@@ -731,7 +571,6 @@ class UserDbConn:
             self.conn.rollback()
             return 0
         self.conn.commit()
-        self.update()
         return rc
 
     def start_duel(self, duelid, start_time):
@@ -744,7 +583,6 @@ class UserDbConn:
             self.conn.rollback()
             return 0
         self.conn.commit()
-        self.update()
         return rc
 
     def complete_duel(self, duelid, winner, finish_time, winner_id = -1, loser_id = -1, delta = 0, dtype = DuelType.OFFICIAL):
@@ -761,7 +599,6 @@ class UserDbConn:
             self.update_duel_rating(loser_id, -delta)
 
         self.conn.commit()
-        self.update()
         return 1
 
     def update_duel_rating(self, userid, delta):
@@ -770,7 +607,6 @@ class UserDbConn:
         '''
         rc = self.conn.execute(query, (delta, userid)).rowcount
         self.conn.commit()
-        self.update()
         return rc
 
     def get_duel_wins(self, userid):
@@ -814,32 +650,32 @@ class UserDbConn:
 
     def get_num_duel_completed(self, userid):
         query = f'''
-            SELECT COUNT(*) as Result FROM duel WHERE (challengee = ? OR challenger = ?) AND status == {Duel.COMPLETE}
+            SELECT COUNT(*) FROM duel WHERE (challengee = ? OR challenger = ?) AND status == {Duel.COMPLETE}
         '''
         return self.conn.execute(query, (userid, userid)).fetchone()[0]
 
     def get_num_duel_draws(self, userid):
         query = f'''
-            SELECT COUNT(*) as Result FROM duel WHERE (challengee = ? OR challenger = ?) AND winner == {Winner.DRAW}
+            SELECT COUNT(*) FROM duel WHERE (challengee = ? OR challenger = ?) AND winner == {Winner.DRAW}
         '''
         return self.conn.execute(query, (userid, userid)).fetchone()[0]
 
     def get_num_duel_losses(self, userid):
         query = f'''
-            SELECT COUNT(*) as Result FROM duel
+            SELECT COUNT(*) FROM duel
             WHERE ((challengee = ? AND winner == {Winner.CHALLENGER}) OR (challenger = ? AND winner == {Winner.CHALLENGEE})) AND status = {Duel.COMPLETE}
         '''
         return self.conn.execute(query, (userid, userid)).fetchone()[0]
 
     def get_num_duel_declined(self, userid):
         query = f'''
-            SELECT COUNT(*) as Result FROM duel WHERE challengee = ? AND status == {Duel.DECLINED}
+            SELECT COUNT(*) FROM duel WHERE challengee = ? AND status == {Duel.DECLINED}
         '''
         return self.conn.execute(query, (userid,)).fetchone()[0]
 
     def get_num_duel_rdeclined(self, userid):
         query = f'''
-            SELECT COUNT(*) as Result FROM duel WHERE challenger = ? AND status == {Duel.DECLINED}
+            SELECT COUNT(*) FROM duel WHERE challenger = ? AND status == {Duel.DECLINED}
         '''
         return self.conn.execute(query, (userid,)).fetchone()[0]
 
@@ -851,7 +687,7 @@ class UserDbConn:
 
     def is_duelist(self, userid):
         query = '''
-            SELECT 1 as Result FROM duelist WHERE user_id = ?
+            SELECT 1 FROM duelist WHERE user_id = ?
         '''
         return self.conn.execute(query, (userid,)).fetchone()
 
@@ -860,11 +696,8 @@ class UserDbConn:
             INSERT OR IGNORE INTO duelist (user_id, rating)
             VALUES (?, 1500)
         '''
-        res = None
         with self.conn:
-            res = self.conn.execute(query, (userid,)).rowcount
-        self.update()
-        return res
+            return self.conn.execute(query, (userid,)).rowcount
 
     def get_duelists(self):
         query = '''
@@ -892,41 +725,31 @@ class UserDbConn:
                  'VALUES (?, ?)')
         with self.conn:
             self.conn.execute(query, (guild_id, channel_id))
-        self.update()
 
     def clear_rankup_channel(self, guild_id):
         query = ('DELETE FROM rankup '
                  'WHERE guild_id = ?')
-        res = None
         with self.conn:
-            res = self.conn.execute(query, (guild_id,)).rowcount
-        self.update()
-        return res
+            return self.conn.execute(query, (guild_id,)).rowcount
 
     def enable_auto_role_update(self, guild_id):
         query = ('INSERT OR REPLACE INTO auto_role_update '
                  '(guild_id) '
                  'VALUES (?)')
-        res = None
         with self.conn:
-            res = self.conn.execute(query, (guild_id,)).rowcount
-        self.update()
-        return res
+            return self.conn.execute(query, (guild_id,)).rowcount
 
     def disable_auto_role_update(self, guild_id):
         query = ('DELETE FROM auto_role_update '
                  'WHERE guild_id = ?')
-        res = None
         with self.conn:
-            res = self.conn.execute(query, (guild_id,)).rowcount
-        self.update()
-        return res
+            return self.conn.execute(query, (guild_id,)).rowcount
 
     def has_auto_role_update_enabled(self, guild_id):
-            query = ('SELECT 1 as Result '
-                    'FROM auto_role_update '
-                    'WHERE guild_id = ?')
-            return self.conn.execute(query, (guild_id,)).fetchone() is not None
+        query = ('SELECT 1 '
+                 'FROM auto_role_update '
+                 'WHERE guild_id = ?')
+        return self.conn.execute(query, (guild_id,)).fetchone() is not None
 
     def reset_status(self, id):
         inactive_query = '''
@@ -952,7 +775,7 @@ class UserDbConn:
 
     # Rated VC stuff
 
-    def create_rated_vc(self, contest_id: int, start_time: float, finish_time: float, guild_id: str, user_ids: List[str]):
+    def create_rated_vc(self, contest_id: int, start_time: float, finish_time: float, guild_id: str, user_ids: [str]):
         """ Creates a rated vc and returns its id.
         """
         query = ('INSERT INTO rated_vcs '
@@ -966,7 +789,6 @@ class UserDbConn:
                          '(vc_id, user_id) '
                          'VALUES (? , ?)')
                 self.conn.execute(query, (id, user_id))
-        self.update()
         return id
 
     def get_rated_vc(self, vc_id: int):
@@ -1001,7 +823,6 @@ class UserDbConn:
 
         with self.conn:
             self.conn.execute(query, (RatedVC.FINISHED, vc_id))
-        self.update()
 
     def update_vc_rating(self, vc_id: int, user_id: str, rating: int):
         query = ('INSERT OR REPLACE INTO rated_vc_users '
@@ -1010,7 +831,6 @@ class UserDbConn:
 
         with self.conn:
             self.conn.execute(query, (vc_id, user_id, rating))
-        self.update()
 
     def get_vc_rating(self, user_id: str, default_if_not_exist: bool = True):
         query = ('SELECT MAX(vc_id) AS latest_vc_id, rating '
@@ -1040,7 +860,6 @@ class UserDbConn:
                  )
         with self.conn:
             self.conn.execute(query, (guild_id, channel_id))
-        self.update()
 
     def get_rated_vc_channel(self, guild_id):
         query = ('SELECT channel_id '
@@ -1057,134 +876,8 @@ class UserDbConn:
         vc_id = self._fetchone(query, params=(user_id, ), row_factory=namedtuple_factory).vc_id
         query = ('DELETE FROM rated_vc_users '
                  'WHERE user_id = ? AND vc_id = ? ')
-        res = None
         with self.conn:
-            res = self.conn.execute(query, (user_id, vc_id)).rowcount
-        self.update()
-        return res
-
-    def create_list(self, guild_id, list_name):
-        query = ('INSERT OR REPLACE INTO lists '
-                 '(guild_id, name) '
-                 'VALUES (?, ?)')
-        res = None
-        with self.conn:
-            res = self.conn.execute(query, (guild_id, list_name, )).rowcount
-        self.update()
-        return res
-
-    def get_lists(self, guild_id):
-        query1 = '''
-            SELECT name FROM lists
-            WHERE guild_id = ?
-        '''
-        res = self.conn.execute(query1, (guild_id,)).fetchall()
-        if res is None:
-            return res
-        return [names for names, in res]
-    
-    def get_list_account_ids(self, list_name, resource):
-        query1 = '''
-            SELECT account_id FROM list_handles
-            WHERE list = ? AND resource = ? 
-        '''
-        res = self.conn.execute(query1, (list_name,resource)).fetchall()
-        if res is None:
-            return res
-        return [account_id for account_id, in res]
-    
-    def get_list_handles(self, list_name, resource):
-        query1 = '''
-            SELECT handle FROM list_handles
-            WHERE list = ? AND resource = ? 
-        '''
-        res = self.conn.execute(query1, (list_name,resource)).fetchall()
-        if res is None:
-            return res
-        return [handle for handle, in res]
-
-    def add_to_list(self, list_name, resource, account_id, handle):
-        query = ('INSERT OR REPLACE INTO list_handles '
-                 '(list, resource, account_id, handle) '
-                 'VALUES (?, ?, ?, ?)')
-        res = None
-        with self.conn:
-            res = self.conn.execute(query, (list_name, resource, account_id, handle,)).rowcount
-        self.update()
-        return res
-
-    def remove_from_list(self, list_name, resource, handle):
-        query = ('DELETE FROM list_handles '
-                 'WHERE list = ? AND resource = ? AND handle = ? ')
-        res = None
-        with self.conn:
-            res = self.conn.execute(query, (list_name, resource, handle,)).rowcount
-        self.update()
-        return res
-
-    def delete_list(self, guild_id, list_name):
-        query = ('DELETE FROM lists '
-                 'WHERE guild_id = ? AND name = ?')
-        res = None
-        with self.conn:
-            res = self.conn.execute(query, (guild_id,list_name,)).rowcount
-        query = ('DELETE FROM list_handles '
-                 'WHERE list = ? ')
-        res = None
-        with self.conn:
-            res = self.conn.execute(query, (list_name,)).rowcount
-        self.update()
-        return res
-    
-    def get_account_id_from_handle(self, handle, resource=None):
-        if resource==None:
-            return None
-        query1 = '''
-            SELECT account_id FROM clist_account_ids
-            WHERE handle = ? AND resource = ? 
-        '''
-        query2 = '''
-            SELECT account_id FROM list_handles
-            WHERE handle = ? AND resource = ? 
-        '''
-
-        res = self.conn.execute(query1, (handle,resource)).fetchone()
-        if res is None:
-            res = self.conn.execute(query2, (handle,resource)).fetchone()
-        if res is None:
-            return None
-        account_id, = res
-        return account_id
-    
-    def ban_user(self, user_id):
-        query = ('INSERT OR REPLACE INTO bans '
-                 '(user_id) '
-                 'VALUES (?)')
-        res = None
-        with self.conn:
-            res = self.conn.execute(query, (user_id,)).rowcount
-        self.update()
-        return res
-
-    def unban_user(self, user_id):
-        query = ('DELETE FROM bans '
-                 'WHERE user_id = ?')
-        res = None
-        with self.conn:
-            res = self.conn.execute(query, (user_id,)).rowcount
-        self.update()
-        return res
-
-    def get_banned_user(self, user_id):
-        query = '''
-            SELECT user_id FROM bans
-            WHERE user_id = ?
-        '''
-        res = self.conn.execute(query, (user_id,)).fetchone()
-        if res is None:
-            return res
-        return res
+            return self.conn.execute(query, (user_id, vc_id)).rowcount
 
     def close(self):
-        self.update()
         self.conn.close()
