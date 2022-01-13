@@ -88,7 +88,7 @@ def main():
     intents.members = True
 
     bot = commands.Bot(command_prefix=commands.when_mentioned_or(';'), intents=intents)
-    cogs = [file.stem for file in Path('tle', 'cogs').glob('*.py')]
+    cogs = [file.stem for file in Path('cogs').glob('*.py')]
     for extension in cogs:
         bot.load_extension(f'cogs.{extension}')
     logging.info(f'Cogs loaded: {", ".join(bot.cogs)}')
