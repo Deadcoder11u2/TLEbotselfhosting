@@ -4,9 +4,9 @@ import logging
 import discord
 from discord.ext import commands
 
-from tle import constants
-from tle.util import codeforces_common as cf_common
-from tle.util import discord_common
+import constants
+from util import codeforces_common as cf_common
+from util import discord_common
 
 _STAR = '\N{WHITE MEDIUM STAR}'
 _STAR_ORANGE = 0xffaa10

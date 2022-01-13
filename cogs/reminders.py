@@ -18,13 +18,13 @@ import discord
 from discord.ext import commands
 import os
 from os import environ
-from tle.util.rounds import Round
-from tle.util import discord_common
-from tle.util import paginator
-from tle import constants
-from tle.util import clist_api as clist
-from tle.util import codeforces_common as cf_common
-from tle.cogs.handles import _CLIST_RESOURCE_SHORT_FORMS, _SUPPORTED_CLIST_RESOURCES
+from util.rounds import Round
+from util import discord_common
+from util import paginator
+import constants
+from util import clist_api as clist
+from util import codeforces_common as cf_common
+from cogs.handles import _CLIST_RESOURCE_SHORT_FORMS, _SUPPORTED_CLIST_RESOURCES
 
 _CONTESTS_PER_PAGE = 5
 _CONTEST_PAGINATE_WAIT_TIME = 5 * 60
