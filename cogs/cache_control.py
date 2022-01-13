@@ -4,8 +4,8 @@ import traceback
 
 from discord.ext import commands
 
-from tle import constants
-from tle.util import codeforces_common as cf_common
+import constants
+from util import codeforces_common as cf_common
 
 
 def timed_command(coro):

@@ -8,14 +8,14 @@ from collections import defaultdict
 import discord
 from discord.ext import commands
 
-from tle import constants
-from tle.util import codeforces_api as cf
-from tle.util import codeforces_common as cf_common
-from tle.util import discord_common
-from tle.util.db import user_db_conn
-from tle.util.db.user_db_conn import Gitgud
-from tle.util import paginator
-from tle.util import cache_system2
+import constants
+from util import codeforces_api as cf
+from util import codeforces_common as cf_common
+from util import discord_common
+from util.db import user_db_conn
+from util.db.user_db_conn import Gitgud
+from util import paginator
+from util import cache_system2
 
 from PIL import Image, ImageFont, ImageDraw
 import io

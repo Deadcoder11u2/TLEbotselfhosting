@@ -8,14 +8,14 @@ from discord.ext import commands
 from collections import defaultdict, namedtuple
 from matplotlib import pyplot as plt
 
-from tle import constants
-from tle.util.db.user_db_conn import Duel, DuelType, Winner
-from tle.util import codeforces_api as cf
-from tle.util import codeforces_common as cf_common
-from tle.util import paginator
-from tle.util import discord_common
-from tle.util import table
-from tle.util import graph_common as gc
+import constants
+from util.db.user_db_conn import Duel, DuelType, Winner
+from util import codeforces_api as cf
+from util import codeforces_common as cf_common
+from util import paginator
+from util import discord_common
+from util import table
+from util import graph_common as gc
 
 _DUEL_INVALIDATE_TIME = 2 * 60
 _DUEL_EXPIRY_TIME = 5 * 60

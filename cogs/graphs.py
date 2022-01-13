@@ -5,7 +5,7 @@ import time
 import re
 import itertools
 import math
-from tle.cogs.handles import ATCODER_RATED_RANKS, CODECHEF_RATED_RANKS, _CLIST_RESOURCE_SHORT_FORMS, _SUPPORTED_CLIST_RESOURCES
+from cogs.handles import ATCODER_RATED_RANKS, CODECHEF_RATED_RANKS, _CLIST_RESOURCE_SHORT_FORMS, _SUPPORTED_CLIST_RESOURCES
 from typing import List
 
 import discord
@@ -19,12 +19,12 @@ from matplotlib import lines as mlines
 from matplotlib import dates as mdates
 from matplotlib.ticker import MultipleLocator
 
-from tle import constants
-from tle.util import codeforces_api as cf
-from tle.util import codeforces_common as cf_common
-from tle.util import clist_api as clist
-from tle.util import discord_common
-from tle.util import graph_common as gc
+import constants
+from util import codeforces_api as cf
+from util import codeforces_common as cf_common
+from util import clist_api as clist
+from util import discord_common
+from util import graph_common as gc
 
 pd.plotting.register_matplotlib_converters()
 

@@ -2,13 +2,13 @@ import logging
 import json
 from discord.ext import commands
 
-from tle.util import codeforces_common as cf_common
-from tle.util import paginator
-from tle.util import table
-from tle.util import clist_api as clist
-from tle import constants
-from tle.util import discord_common
-from tle.cogs.handles import HandleCogError,_CLIST_RESOURCE_SHORT_FORMS, _HANDLES_PER_PAGE, _PAGINATE_WAIT_TIME,_SUPPORTED_CLIST_RESOURCES, resource_name
+from util import codeforces_common as cf_common
+from util import paginator
+from util import table
+from util import clist_api as clist
+import constants
+from util import discord_common
+from cogs.handles import HandleCogError,_CLIST_RESOURCE_SHORT_FORMS, _HANDLES_PER_PAGE, _PAGINATE_WAIT_TIME,_SUPPORTED_CLIST_RESOURCES, resource_name
 from discord.ext import commands
 
 def _make_pages(users, title, resource='codeforces.com'):

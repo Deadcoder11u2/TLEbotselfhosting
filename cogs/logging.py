@@ -4,7 +4,7 @@ import os
 
 from discord.ext import commands
 
-from tle.util import discord_common
+from util import discord_common
 
 root_logger = logging.getLogger()
 logger = logging.getLogger(__name__)

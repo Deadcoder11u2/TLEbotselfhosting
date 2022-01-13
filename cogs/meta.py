@@ -6,9 +6,9 @@ import textwrap
 
 from discord.ext import commands
 
-from tle import constants
-from tle.util.codeforces_common import pretty_time_format
-from tle.util import clist_api
+import constants
+from util.codeforces_common import pretty_time_format
+from util import clist_api
 
 RESTART = 42
 

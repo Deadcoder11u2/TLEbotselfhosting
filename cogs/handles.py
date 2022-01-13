@@ -17,20 +17,20 @@ import discord
 import random, string
 from discord.ext import commands
 
-from tle import constants
-from tle.util import cache_system2
-from tle.util import codeforces_api as cf
-from tle.util import clist_api as clist
-from tle.util import codeforces_common as cf_common
-from tle.util import discord_common
-from tle.util import events
-from tle.util import paginator
-from tle.util import table
-from tle.util import tasks
-from tle.util import db
-from tle.util import scaper
-from tle.util.codeforces_api import Rank, rating2rank
-from tle import constants
+import constants
+from util import cache_system2
+from util import codeforces_api as cf
+from util import clist_api as clist
+from util import codeforces_common as cf_common
+from util import discord_common
+from util import events
+from util import paginator
+from util import table
+from util import tasks
+from util import db
+from util import scaper
+from util.codeforces_api import Rank, rating2rank
+import constants
 
 from discord.ext import commands
 

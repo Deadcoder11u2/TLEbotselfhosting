@@ -3,13 +3,13 @@ import json
 import discord
 from discord.ext import commands
 
-from tle.util import codeforces_common as cf_common
-from tle.util import codeforces_api as cf
-from tle import constants
-from tle.util import discord_common
-from tle.cogs.handles import HandleCogError,_CLIST_RESOURCE_SHORT_FORMS,_SUPPORTED_CLIST_RESOURCES
-from tle.cogs.handles import CODECHEF_RATED_RANKS
-from tle.util.codeforces_api import RATED_RANKS as CODEFORCES_RATED_RANKS
+from util import codeforces_common as cf_common
+from util import codeforces_api as cf
+import constants
+from util import discord_common
+from cogs.handles import HandleCogError,_CLIST_RESOURCE_SHORT_FORMS,_SUPPORTED_CLIST_RESOURCES
+from cogs.handles import CODECHEF_RATED_RANKS
+from util.codeforces_api import RATED_RANKS as CODEFORCES_RATED_RANKS
 from discord.ext import commands
 
 async def _create_roles(ctx, ranks):
