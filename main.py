@@ -7,7 +7,6 @@ import discord
 from logging.handlers import TimedRotatingFileHandler
 from os import environ
 from pathlib import Path
-from keeping_alive import keep_alive
 
 import seaborn as sns
 from discord.ext import commands
@@ -93,7 +92,6 @@ def main():
         asyncio.create_task(discord_common.presence(bot))
 
     bot.add_listener(discord_common.bot_error_handler, name='on_command_error')
-    keep_alive()
     print("Started web server")
     bot.run(token)
 
