@@ -92,7 +92,7 @@ def get_gudgitters_image(rankings):
     WIDTH_RANK = 0.08*WIDTH
     WIDTH_NAME = 0.38*WIDTH
     LINE_HEIGHT = (HEIGHT - 2*BORDER_MARGIN)/(10 + HEADER_SPACING)
-    discord_file = discord.File(image_data, filename='gudgitters.png')
+    discord_file = discord.File()
     return discord_file
 
 def get_prettyhandles_image(rows, font):
